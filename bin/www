@@ -1,0 +1,154 @@
+#!/usr/bin/env node
+
+/**
+ * Module dependencies.
+ */
+
+var app = require('../app');
+var debug = require('debug')('poker:server');
+var http = require('http');
+var port = normalizePort(process.env.PORT || '3000');
+app.set('port', port);
+
+
+var server = http.createServer(app);
+server.listen(port);
+server.on('error', onError);
+server.on('listening', onListening);
+
+
+var poker = require('../lib/poker');
+
+var io = require('socket.io').listen(server);
+
+var usr;
+var playerList = {};
+var playerCount = 0;
+var discardList = {};
+
+io.on('connection', function(socket) {
+
+  socket.on('join', function(uid) {
+
+    if (playerCount == 0) {
+      playerCount++;
+      playerList[0] = uid;
+      socket.join(uid);
+      io.to(uid).emit('waiting');
+
+      console.log(uid + ' join game...');
+    }else if(playerCount == 1){
+      playerCount++;
+      playerList[1] = uid;
+      socket.join(uid);
+      console.log(uid + ' join game...');
+      var pokerList = poker.getPoker();
+
+      var data1 = {
+        pokerList: pokerList.poker1,
+        first: 1
+      };
+      var data2 = {
+        pokerList: pokerList.poker2,
+        first: 0
+      };
+
+      discardList[0] = 0;
+      discardList[1] = 0;
+
+      io.to(playerList[0]).emit("start", data1);
+      io.to(playerList[1]).emit("start", data2);
+
+    }else{
+      socket.join(uid);
+      io.to(uid).emit('crowded');
+      socket.leave(uid);
+      console.log(uid + ' crowding ...');
+    }
+
+  });
+
+  //出牌
+  socket.on('discard', function(data) {
+    // var to = (data.from === playerList[0])?playerList[1]:playerList[0];
+    var to;
+
+    if (data.from === playerList[0]) {
+      discardList[0] += data.pokerList.length;
+      to = playerList[1];
+    }else{
+      discardList[1] += data.pokerList.length;
+      to = playerList[0];
+    }
+    io.to(to).emit("discard", data);
+
+
+    if(discardList[0] == 27) {
+      io.to(playerList[0]).emit("gameover", playerList[0]);
+      io.to(playerList[1]).emit("gameover", playerList[0]);
+    }else if(discardList[1] == 27){
+      io.to(playerList[0]).emit("gameover", playerList[1]);
+      io.to(playerList[1]).emit("gameover", playerList[1]);
+    }
+  });
+
+  //非正常下线
+  socket.on('disconnect', function() {
+    playerCount=0;
+    console.log('offline...');
+  });
+});
+
+
+
+
+
+function normalizePort(val) {
+  var port = parseInt(val, 10);
+
+  if (isNaN(port)) {
+    return val;
+  }
+  if (port >= 0) {
+    return port;
+  }
+
+  return false;
+}
+
+
+function onError(error) {
+  if (error.syscall !== 'listen') {
+    throw error;
+  }
+
+  var bind = typeof port === 'string'
+    ? 'Pipe ' + port
+    : 'Port ' + port;
+
+  // handle specific listen errors with friendly messages
+  switch (error.code) {
+    case 'EACCES':
+      console.error(bind + ' requires elevated privileges');
+      process.exit(1);
+      break;
+    case 'EADDRINUSE':
+      console.error(bind + ' is already in use');
+      process.exit(1);
+      break;
+    default:
+      throw error;
+  }
+}
+
+/**
+ * Event listener for HTTP server "listening" event.
+ */
+
+function onListening() {
+  var addr = server.address();
+  var bind = typeof addr === 'string'
+    ? 'pipe ' + addr
+    : 'port ' + addr.port;
+  debug('Listening on ' + bind);
+}
